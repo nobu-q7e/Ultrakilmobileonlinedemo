@@ -38,6 +38,12 @@
   #wep{position:absolute;top:10px;left:50%;transform:translateX(-50%);display:flex;gap:6px;pointer-events:none}
   #wep .btn{position:static;width:38px;height:34px;pointer-events:auto}
   #err{color:#ff8a80}
+  #menuBtn{left:64px;top:12px;width:56px;height:34px}
+  #controls.menu #moveZone{display:none}
+  #controls.menu #lookZone{left:0;width:100%}
+  #controls.menu #stickBase{display:none!important}
+  #controls.menu #wep{display:none}
+  #controls.menu .btn:not(#pause):not(#menuBtn){display:none}
   #rot{position:fixed;inset:0;z-index:60;background:#111;display:none;align-items:center;justify-content:center;text-align:center;font-size:18px}
   @media (orientation:portrait){#rot{display:flex}}
 </style>
@@ -50,7 +56,8 @@
   <div class="zone" id="moveZone"></div>
   <div class="zone" id="lookZone"></div>
   <div id="stickBase"><div id="stickKnob"></div></div>
-  <div class="btn sq" id="pause" data-key="Escape" data-kc="27">ESC</div>
+  <div class="btn sq" id="pause" data-key="Escape" data-kc="27" data-code="Escape">ESC</div>
+  <div class="btn sq" id="menuBtn">CURSOR</div>
   <div id="wep">
     <div class="btn sq" data-key="1" data-kc="49" data-code="Digit1">1</div>
     <div class="btn sq" data-key="2" data-kc="50" data-code="Digit2">2</div>
@@ -88,28 +95,46 @@
 
 
 <script>
-/* ---- Touch controls ---- */
+/* ---- Touch controls (with menu/cursor mode) ---- */
 (function(){
   var canvas=null;
   function C(){return canvas||(canvas=document.getElementById('unity-canvas'));}
-  var heldKeys={};
-  function key(type,key,kc,code){
-    var e=new KeyboardEvent(type,{key:key,code:code||'',bubbles:true,cancelable:true});
+  var controls=document.getElementById('controls');
+  var held={};
+  function key(type,k,kc,code){
+    var e=new KeyboardEvent(type,{key:k,code:code||'',bubbles:true,cancelable:true});
     try{Object.defineProperty(e,'keyCode',{get:function(){return kc;}});Object.defineProperty(e,'which',{get:function(){return kc;}});}catch(x){}
     C().dispatchEvent(e);
   }
-  function keyDown(k,kc,code){ if(heldKeys[k]) return; heldKeys[k]=1; key('keydown',k,kc,code); }
-  function keyUp(k,kc,code){ if(!heldKeys[k]) return; delete heldKeys[k]; key('keyup',k,kc,code); }
+  function keyDown(k,kc,code){ if(held[k]) return; held[k]={kc:kc,code:code}; key('keydown',k,kc,code); }
+  function keyUp(k,kc,code){ if(!held[k]) return; delete held[k]; key('keyup',k,kc,code); }
+  function releaseAll(){ Object.keys(held).forEach(function(k){var h=held[k]; delete held[k]; key('keyup',k,h.kc,h.code);}); }
   var cx=innerWidth/2, cy=innerHeight/2;
-  function mouse(type,btn,x,y,mx,my){
-    var buttons = (type==='mouseup')?0:(1<<btn);
-    var e=new MouseEvent(type,{bubbles:true,cancelable:true,clientX:x==null?cx:x,clientY:y==null?cy:y,button:btn||0,buttons:buttons,view:window});
+  function mouse(type,btn,x,y,mx,my,bs){
+    if(bs===undefined) bs=(type==='mousedown')?(1<<btn):0;
+    var e=new MouseEvent(type,{bubbles:true,cancelable:true,clientX:x==null?cx:x,clientY:y==null?cy:y,button:btn||0,buttons:bs,view:window});
     try{Object.defineProperty(e,'movementX',{get:function(){return mx||0;}});Object.defineProperty(e,'movementY',{get:function(){return my||0;}});}catch(x){}
     C().dispatchEvent(e);
   }
 
-  /* buttons */
+  /* menu mode = cursor free (game not locked) OR forced via the CURSOR button */
+  var forced=false, wasMenu=false;
+  var mbtn=document.getElementById('menuBtn');
+  function menuMode(){ return forced || !window.__isLocked(); }
+  function refresh(){
+    var m=menuMode();
+    controls.classList.toggle('menu',m);
+    mbtn.classList.toggle('on',forced);
+    if(m && !wasMenu){ releaseAll(); stickReset(); }
+    wasMenu=m;
+  }
+  document.addEventListener('pointerlockchange',refresh);
+  setInterval(refresh,250);
+  mbtn.addEventListener('touchstart',function(e){e.preventDefault();forced=!forced;refresh();},{passive:false});
+
+  /* on-screen buttons */
   document.querySelectorAll('#controls .btn').forEach(function(b){
+    if(b.id==='menuBtn') return;
     function down(ev){ev.preventDefault();b.classList.add('on');
       if(b.dataset.mouse!==undefined) mouse('mousedown',+b.dataset.mouse);
       else keyDown(b.dataset.key,+b.dataset.kc,b.dataset.code);}
@@ -121,43 +146,48 @@
     b.addEventListener('touchcancel',up,{passive:false});
   });
 
-  /* move stick -> WASD */
+  /* move stick -> WASD (gameplay only) */
   var mz=document.getElementById('moveZone'), base=document.getElementById('stickBase'), knob=document.getElementById('stickKnob');
   var mId=null, ox=0, oy=0;
   var W={k:'w',kc:87,c:'KeyW'},A={k:'a',kc:65,c:'KeyA'},S={k:'s',kc:83,c:'KeyS'},D={k:'d',kc:68,c:'KeyD'};
   function setDir(o,on){ on?keyDown(o.k,o.kc,o.c):keyUp(o.k,o.kc,o.c); }
+  function stickReset(){ mId=null; base.style.display='none'; knob.style.left='31px'; knob.style.top='31px'; setDir(W,0);setDir(A,0);setDir(S,0);setDir(D,0); }
   function stickUpdate(t){
     var dx=t.clientX-ox, dy=t.clientY-oy, m=Math.hypot(dx,dy), max=50;
     if(m>max){dx*=max/m;dy*=max/m;}
     knob.style.left=(31+dx)+'px'; knob.style.top=(31+dy)+'px';
-    var th=14;
-    setDir(W,dy<-th); setDir(S,dy>th); setDir(A,dx<-th); setDir(D,dx>th);
+    var th=14; setDir(W,dy<-th); setDir(S,dy>th); setDir(A,dx<-th); setDir(D,dx>th);
   }
   mz.addEventListener('touchstart',function(e){e.preventDefault();var t=e.changedTouches[0];mId=t.identifier;ox=t.clientX;oy=t.clientY;
     base.style.display='block';base.style.left=(ox-55)+'px';base.style.top=(oy-55)+'px';stickUpdate(t);},{passive:false});
   mz.addEventListener('touchmove',function(e){e.preventDefault();for(var i=0;i<e.changedTouches.length;i++){if(e.changedTouches[i].identifier===mId)stickUpdate(e.changedTouches[i]);}},{passive:false});
-  function mEnd(e){e.preventDefault();for(var i=0;i<e.changedTouches.length;i++){if(e.changedTouches[i].identifier===mId){mId=null;base.style.display='none';
-    knob.style.left='31px';knob.style.top='31px';setDir(W,0);setDir(A,0);setDir(S,0);setDir(D,0);}}}
+  function mEnd(e){e.preventDefault();for(var i=0;i<e.changedTouches.length;i++){if(e.changedTouches[i].identifier===mId)stickReset();}}
   mz.addEventListener('touchend',mEnd,{passive:false});mz.addEventListener('touchcancel',mEnd,{passive:false});
 
-  /* look pad -> mouse movement; tap -> click (for menus when cursor is unlocked) */
-  var lz=document.getElementById('lookZone'), lId=null, lx=0, ly=0, sx=0, sy=0, st=0, moved=false;
+  /* full-area pad: LOOK in gameplay, CURSOR (tap / drag / hold) in menus */
+  var lz=document.getElementById('lookZone'), lId=null, lx=0, ly=0, lMode='look';
   var SENS=1.6;
-  lz.addEventListener('touchstart',function(e){e.preventDefault();var t=e.changedTouches[0];lId=t.identifier;lx=sx=t.clientX;ly=sy=t.clientY;st=Date.now();moved=false;
-    if(!window.__isLocked()) mouse('mousemove',0,lx,ly,0,0);},{passive:false});
+  lz.addEventListener('touchstart',function(e){e.preventDefault();var t=e.changedTouches[0];
+    lId=t.identifier; lx=t.clientX; ly=t.clientY; lMode=menuMode()?'menu':'look';
+    if(lMode==='menu'){ mouse('mousemove',0,lx,ly,0,0,0); mouse('mousedown',0,lx,ly); }
+  },{passive:false});
   lz.addEventListener('touchmove',function(e){e.preventDefault();for(var i=0;i<e.changedTouches.length;i++){var t=e.changedTouches[i];if(t.identifier!==lId)continue;
     var dx=(t.clientX-lx)*SENS, dy=(t.clientY-ly)*SENS; lx=t.clientX; ly=t.clientY;
-    if(Math.hypot(t.clientX-sx,t.clientY-sy)>8) moved=true;
-    if(window.__isLocked()) mouse('mousemove',0,cx,cy,dx,dy); else mouse('mousemove',0,t.clientX,t.clientY,dx,dy);}},{passive:false});
+    if(lMode==='menu') mouse('mousemove',0,t.clientX,t.clientY,dx,dy,1);
+    else mouse('mousemove',0,cx,cy,dx,dy,0);
+  }},{passive:false});
   function lEnd(e){e.preventDefault();for(var i=0;i<e.changedTouches.length;i++){var t=e.changedTouches[i];if(t.identifier!==lId)continue;lId=null;
-    if(!moved && Date.now()-st<350 && !window.__isLocked()){mouse('mousemove',0,t.clientX,t.clientY,0,0);mouse('mousedown',0,t.clientX,t.clientY);mouse('mouseup',0,t.clientX,t.clientY);
-      var c=new MouseEvent('click',{bubbles:true,clientX:t.clientX,clientY:t.clientY,view:window});C().dispatchEvent(c);}}}
+    if(lMode==='menu'){
+      mouse('mouseup',0,t.clientX,t.clientY);
+      C().dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:t.clientX,clientY:t.clientY,view:window}));
+    }
+  }}
   lz.addEventListener('touchend',lEnd,{passive:false});lz.addEventListener('touchcancel',lEnd,{passive:false});
 
-  /* block page scroll/zoom gestures */
   ['gesturestart','gesturechange','gestureend'].forEach(function(n){document.addEventListener(n,function(e){e.preventDefault();});});
   document.addEventListener('touchmove',function(e){e.preventDefault();},{passive:false});
   window.addEventListener('resize',function(){cx=innerWidth/2;cy=innerHeight/2;});
+  refresh();
 })();
 </script>
 
